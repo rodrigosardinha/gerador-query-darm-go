@@ -615,39 +615,54 @@ func (dp *DarmProcessor) extractDarmData(text string) *DarmData {
 
 	// Extrair número da guia
 	if matches := numeroGuiaRegex1.FindStringSubmatch(text); len(matches) > 1 {
-		data.NumeroGuia = strings.TrimSpace(matches[1])
-		data.NumeroGuia = strings.TrimLeft(data.NumeroGuia, "0")
-		if data.NumeroGuia == "" {
-			data.NumeroGuia = "0"
+		guiaRaw := strings.TrimLeft(strings.TrimSpace(matches[1]), "0")
+		if len(guiaRaw) > 3 {
+			guiaRaw = guiaRaw[:3]
 		}
+		if guiaRaw == "" {
+			guiaRaw = "0"
+		}
+		data.NumeroGuia = guiaRaw
 		logrus.Infof("Campo numeroGuia encontrado: %s", data.NumeroGuia)
 	} else if matches := numeroGuiaRegex2.FindStringSubmatch(text); len(matches) > 1 {
-		data.NumeroGuia = strings.TrimSpace(matches[1])
-		data.NumeroGuia = strings.TrimLeft(data.NumeroGuia, "0")
-		if data.NumeroGuia == "" {
-			data.NumeroGuia = "0"
+		guiaRaw := strings.TrimLeft(strings.TrimSpace(matches[1]), "0")
+		if len(guiaRaw) > 3 {
+			guiaRaw = guiaRaw[:3]
 		}
+		if guiaRaw == "" {
+			guiaRaw = "0"
+		}
+		data.NumeroGuia = guiaRaw
 		logrus.Infof("Campo numeroGuia encontrado: %s", data.NumeroGuia)
 	} else if matches := numeroGuiaRegex3.FindStringSubmatch(text); len(matches) > 1 {
-		data.NumeroGuia = strings.TrimSpace(matches[1])
-		data.NumeroGuia = strings.TrimLeft(data.NumeroGuia, "0")
-		if data.NumeroGuia == "" {
-			data.NumeroGuia = "0"
+		guiaRaw := strings.TrimLeft(strings.TrimSpace(matches[1]), "0")
+		if len(guiaRaw) > 3 {
+			guiaRaw = guiaRaw[:3]
 		}
+		if guiaRaw == "" {
+			guiaRaw = "0"
+		}
+		data.NumeroGuia = guiaRaw
 		logrus.Infof("Campo numeroGuia encontrado: %s", data.NumeroGuia)
 	} else if matches := numeroGuiaRegex4.FindStringSubmatch(text); len(matches) > 1 {
-		data.NumeroGuia = strings.TrimSpace(matches[1])
-		data.NumeroGuia = strings.TrimLeft(data.NumeroGuia, "0")
-		if data.NumeroGuia == "" {
-			data.NumeroGuia = "0"
+		guiaRaw := strings.TrimLeft(strings.TrimSpace(matches[1]), "0")
+		if len(guiaRaw) > 3 {
+			guiaRaw = guiaRaw[:3]
 		}
+		if guiaRaw == "" {
+			guiaRaw = "0"
+		}
+		data.NumeroGuia = guiaRaw
 		logrus.Infof("Campo numeroGuia encontrado: %s", data.NumeroGuia)
 	} else if matches := numeroGuiaRegex5.FindStringSubmatch(text); len(matches) > 1 {
-		data.NumeroGuia = strings.TrimSpace(matches[1])
-		data.NumeroGuia = strings.TrimLeft(data.NumeroGuia, "0")
-		if data.NumeroGuia == "" {
-			data.NumeroGuia = "0"
+		guiaRaw := strings.TrimLeft(strings.TrimSpace(matches[1]), "0")
+		if len(guiaRaw) > 3 {
+			guiaRaw = guiaRaw[:3]
 		}
+		if guiaRaw == "" {
+			guiaRaw = "0"
+		}
+		data.NumeroGuia = guiaRaw
 		logrus.Infof("Campo numeroGuia encontrado: %s", data.NumeroGuia)
 	}
 
