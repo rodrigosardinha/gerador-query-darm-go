@@ -1,0 +1,27 @@
+{
+  "database": {
+    "host": "localhost",
+    "port": 3306,
+    "database": "silfae",
+    "username": "root",
+    "password": "",
+    "charset": "latin1"
+  },
+  "paths": {
+    "base_dir": ".",
+    "darms_dir": "darms",
+    "output_dir": "inserts",
+    "temp_dir": "temp"
+  },
+  "sql": {
+    "encoding": "latin1",
+    "batch_size": 100,
+    "use_transaction": true,
+    "use_ignore": true
+  },
+  "logging": {
+    "level": "info",
+    "format": "text",
+    "output_file": ""
+  }
+} 

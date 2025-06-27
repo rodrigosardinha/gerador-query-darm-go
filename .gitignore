@@ -1,0 +1,48 @@
+# Binários Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+darm-processor
+darm-processor.exe
+
+# Testes
+*.test
+*.out
+
+# Cobertura de código
+*.cover
+
+# Go workspace file
+go.work
+
+# Dependências
+vendor/
+
+# Arquivos temporários
+*.tmp
+*.temp
+
+# Logs
+*.log
+
+# Arquivos de configuração local
+config.local.json
+
+# Arquivos de build
+build/
+dist/
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Arquivos de teste
+testdata/ 
