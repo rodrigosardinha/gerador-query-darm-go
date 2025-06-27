@@ -45,4 +45,10 @@ Thumbs.db
 *.swo
 
 # Arquivos de teste
-testdata/ 
+testdata/
+
+# Conteúdo das pastas darms e inserts (mantém as pastas vazias)
+darms/*
+inserts/*
+!darms/.gitkeep
+!inserts/.gitkeep 
