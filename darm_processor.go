@@ -47,10 +47,11 @@ var (
 	exercicioRegex2 = regexp.MustCompile(`(\d{4})\s*(?:Exercício|EXERCÍCIO)`)
 	exercicioRegex3 = regexp.MustCompile(`04\.\s*ANO DE REFERÊNCIA\s*(\d{4})`)
 
-	numeroGuiaRegex1 = regexp.MustCompile(`05\.\s*GUIA NØ\s*\n?([0-9]+)`)
-	numeroGuiaRegex2 = regexp.MustCompile(`(?:Guia|GUIA|Número da Guia|Nº Guia)\s*:?\s*(\d+)`)
-	numeroGuiaRegex3 = regexp.MustCompile(`(?:Guia|GUIA)\s*(\d+)`)
-	numeroGuiaRegex4 = regexp.MustCompile(`Guia\.?\s*:?\s*(\d+)`)
+	numeroGuiaRegex1 = regexp.MustCompile(`05\.\s*GUIA\s*NØ\s*(\d+)`)
+	numeroGuiaRegex2 = regexp.MustCompile(`05\.\s*GUIA\s*NØ(\d+)`)
+	numeroGuiaRegex3 = regexp.MustCompile(`(?:Guia|GUIA|Número da Guia|Nº Guia)\s*:?\s*(\d+)`)
+	numeroGuiaRegex4 = regexp.MustCompile(`(?:Guia|GUIA)\s*(\d+)`)
+	numeroGuiaRegex5 = regexp.MustCompile(`Guia\.?\s*:?\s*(\d+)`)
 
 	competenciaRegex1 = regexp.MustCompile(`(?:Competência|COMPETÊNCIA|Comp\.?)\s*:?\s*(\d{2}/\d{4})`)
 	competenciaRegex2 = regexp.MustCompile(`(\d{2}/\d{4})\s*(?:Competência|COMPETÊNCIA)`)
@@ -635,6 +636,13 @@ func (dp *DarmProcessor) extractDarmData(text string) *DarmData {
 		}
 		logrus.Infof("Campo numeroGuia encontrado: %s", data.NumeroGuia)
 	} else if matches := numeroGuiaRegex4.FindStringSubmatch(text); len(matches) > 1 {
+		data.NumeroGuia = strings.TrimSpace(matches[1])
+		data.NumeroGuia = strings.TrimLeft(data.NumeroGuia, "0")
+		if data.NumeroGuia == "" {
+			data.NumeroGuia = "0"
+		}
+		logrus.Infof("Campo numeroGuia encontrado: %s", data.NumeroGuia)
+	} else if matches := numeroGuiaRegex5.FindStringSubmatch(text); len(matches) > 1 {
 		data.NumeroGuia = strings.TrimSpace(matches[1])
 		data.NumeroGuia = strings.TrimLeft(data.NumeroGuia, "0")
 		if data.NumeroGuia == "" {
