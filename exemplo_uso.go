@@ -32,64 +32,6 @@ func ExemploUso() {
 	logrus.Info("✅ Exemplo básico concluído!")
 }
 
-// ExemploConfiguracao demonstra como configurar o processador
-func ExemploConfiguracao() {
-	logrus.Info("⚙️ Exemplo de configuração personalizada")
-
-	// 1. Carregar configuração padrão
-	config, err := LoadConfig("config.json")
-	if err != nil {
-		logrus.Errorf("❌ Erro ao carregar configuração: %v", err)
-		return
-	}
-
-	// 2. Personalizar configuração
-	config.Database.Host = "192.168.1.100"
-	config.Database.Port = 3306
-	config.Database.Database = "silfae"
-	config.SQL.BatchSize = 50
-	config.Logging.Level = "debug"
-
-	// 3. Salvar configuração
-	if err := SaveConfig(config, "config_personalizada.json"); err != nil {
-		logrus.Errorf("❌ Erro ao salvar configuração: %v", err)
-	}
-
-	logrus.Info("✅ Configuração personalizada salva em config_personalizada.json")
-}
-
-// ExemploUtilitarios demonstra como usar os utilitários
-func ExemploUtilitarios() {
-	logrus.Info("🛠️ Exemplo de uso dos utilitários")
-
-	// StringUtils
-	stringUtils := NewStringUtils()
-	logrus.Infof("📝 RemoveAccents: %s", stringUtils.RemoveAccents("café"))
-	logrus.Infof("📝 CleanString: %s", stringUtils.CleanString("café@#$%"))
-	logrus.Infof("💰 FormatCurrency: %s", stringUtils.FormatCurrency(1234.56))
-
-	// DateUtils
-	dateUtils := NewDateUtils()
-	sqlDate, err := dateUtils.ConvertDateBRToSQL("15/12/2024")
-	if err != nil {
-		logrus.Errorf("❌ Erro ao converter data: %v", err)
-	} else {
-		logrus.Infof("📅 Data convertida: %s", sqlDate)
-	}
-
-	// ValidationUtils
-	validationUtils := NewValidationUtils()
-	logrus.Infof("🔍 CPF válido: %t", validationUtils.IsValidCPF("123.456.789-09"))
-	logrus.Infof("🔍 Email válido: %t", validationUtils.IsValidEmail("test@example.com"))
-
-	// SQLUtils
-	sqlUtils := NewSQLUtils()
-	logrus.Infof("💾 QuoteString: %s", sqlUtils.QuoteString("O'Connor"))
-	logrus.Infof("💾 FormatSQLValue: %s", sqlUtils.FormatSQLValue(123.45))
-
-	logrus.Info("✅ Exemplo de utilitários concluído!")
-}
-
 // ExemploTestes demonstra como executar testes
 func ExemploTestes() {
 	logrus.Info("🧪 Exemplo de execução de testes")

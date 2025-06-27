@@ -7,10 +7,59 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ledongthuc/pdf"
 	"github.com/sirupsen/logrus"
+)
+
+// Regex compilados para melhor performance
+var (
+	// Regex para extração de dados
+	inscricaoRegex      = regexp.MustCompile(`(?:Inscrição|INSCRIÇÃO|Inscrição Municipal|Inscrição)\s*:?\s*(\d+)`)
+	inscricaoAltRegex   = regexp.MustCompile(`(?:Inscrição|INSCRIÇÃO)\s*(\d+)`)
+	inscricaoShortRegex = regexp.MustCompile(`Insc\.?\s*:?\s*(\d+)`)
+	inscricaoNumRegex   = regexp.MustCompile(`02\.\s*INSCRIÇÃO MUNICIPAL\s*(\d+)`)
+
+	codigoBarrasRegex = regexp.MustCompile(`[\d\.\s]+`)
+	cleanDigitsRegex  = regexp.MustCompile(`\D`)
+
+	codigoReceitaRegex1 = regexp.MustCompile(`(?:RECEITA|Receita)\s*(\d{1,4}-\d{1,2})(?:[^\d]|$)`)
+	codigoReceitaRegex2 = regexp.MustCompile(`01\.\s*RECEITA\s*(\d{1,4}-\d{1,2})(?:[^\d]|$)`)
+	codigoReceitaRegex3 = regexp.MustCompile(`(\d{1,4})-(\d{1,2})(?:[^\d]|$)`)
+
+	valorPrincipalRegex1 = regexp.MustCompile(`(?:Valor Principal|VALOR PRINCIPAL|Valor principal)\s*:?\s*R?\$?\s*([\d,\.]+)`)
+	valorPrincipalRegex2 = regexp.MustCompile(`(?:Principal|PRINCIPAL)\s*:?\s*R?\$?\s*([\d,\.]+)`)
+	valorPrincipalRegex3 = regexp.MustCompile(`R?\$?\s*([\d,\.]+)\s*(?:Principal|PRINCIPAL)`)
+	valorPrincipalRegex4 = regexp.MustCompile(`06\.\s*VALOR DO TRIBUTO\s*R?\$?\s*([\d,\.]+)`)
+
+	valorTotalRegex1 = regexp.MustCompile(`(?:Valor Total|VALOR TOTAL|Valor total)\s*:?\s*R?\$?\s*([\d,\.]+)`)
+	valorTotalRegex2 = regexp.MustCompile(`(?:Total|TOTAL)\s*:?\s*R?\$?\s*([\d,\.]+)`)
+	valorTotalRegex3 = regexp.MustCompile(`R?\$?\s*([\d,\.]+)\s*(?:Total|TOTAL)`)
+	valorTotalRegex4 = regexp.MustCompile(`09\.\s*VALOR TOTAL\s*R?\$?\s*([\d,\.]+)`)
+
+	dataVencimentoRegex1 = regexp.MustCompile(`(?:Vencimento|VENCIMENTO|Venc\.?)\s*:?\s*(\d{2}/\d{2}/\d{4})`)
+	dataVencimentoRegex2 = regexp.MustCompile(`(\d{2}/\d{2}/\d{4})\s*(?:Vencimento|VENCIMENTO)`)
+	dataVencimentoRegex3 = regexp.MustCompile(`03\.\s*DATA VENCIMENTO\s*(\d{2}/\d{2}/\d{4})`)
+
+	exercicioRegex1 = regexp.MustCompile(`(?:Exercício|EXERCÍCIO|Exerc\.?)\s*:?\s*(\d{4})`)
+	exercicioRegex2 = regexp.MustCompile(`(\d{4})\s*(?:Exercício|EXERCÍCIO)`)
+	exercicioRegex3 = regexp.MustCompile(`04\.\s*ANO DE REFERÊNCIA\s*(\d{4})`)
+
+	numeroGuiaRegex1 = regexp.MustCompile(`05\.\s*GUIA NØ\s*\n?([0-9]+)`)
+	numeroGuiaRegex2 = regexp.MustCompile(`(?:Guia|GUIA|Número da Guia|Nº Guia)\s*:?\s*(\d+)`)
+	numeroGuiaRegex3 = regexp.MustCompile(`(?:Guia|GUIA)\s*(\d+)`)
+	numeroGuiaRegex4 = regexp.MustCompile(`Guia\.?\s*:?\s*(\d+)`)
+
+	competenciaRegex1 = regexp.MustCompile(`(?:Competência|COMPETÊNCIA|Comp\.?)\s*:?\s*(\d{2}/\d{4})`)
+	competenciaRegex2 = regexp.MustCompile(`(\d{2}/\d{4})\s*(?:Competência|COMPETÊNCIA)`)
+
+	// Regex para processamento de SQL
+	valuesRegex = regexp.MustCompile(`(?s)VALUES\s*\((.*?)\);`)
+
+	// Regex para limpeza de valores monetários
+	monetaryCleanRegex = regexp.MustCompile(`[R$\s]`)
 )
 
 // DarmData representa os dados extraídos de um DARM
@@ -34,6 +83,7 @@ type DarmProcessor struct {
 	ProcessedGuias   map[string]bool
 	GuiasProcessadas []string
 	AllSQLInserts    []string
+	mu               sync.RWMutex // Mutex para thread safety
 }
 
 // NewDarmProcessor cria uma nova instância do processador
@@ -122,7 +172,6 @@ func (dp *DarmProcessor) generateSingleSQLFile() error {
 
 	for index, sqlInsert := range dp.AllSQLInserts {
 		// Extrair apenas a parte VALUES do INSERT (permitindo múltiplas linhas)
-		valuesRegex := regexp.MustCompile(`(?s)VALUES\s*\((.*?)\);`)
 		matches := valuesRegex.FindStringSubmatch(sqlInsert)
 		if len(matches) > 1 {
 			valuesPart := matches[1]
@@ -295,7 +344,7 @@ func (dp *DarmProcessor) getUniqueGuias() []string {
 	return result
 }
 
-// ProcessDarms processa todos os DARMs
+// ProcessDarms processa todos os DARMs no diretório
 func (dp *DarmProcessor) ProcessDarms() error {
 	logrus.Info("🚀 Iniciando processamento dos DARMs...")
 
@@ -324,11 +373,32 @@ func (dp *DarmProcessor) ProcessDarms() error {
 
 	logrus.Infof("📁 Encontrados %d arquivos PDF para processar.", len(pdfFiles))
 
-	// Processar cada arquivo PDF
+	// Processar arquivos em paralelo com limite de goroutines
+	const maxWorkers = 4 // Limitar número de goroutines para evitar sobrecarga
+	semaphore := make(chan struct{}, maxWorkers)
+	var wg sync.WaitGroup
+	errors := make(chan error, len(pdfFiles))
+
 	for _, pdfFile := range pdfFiles {
-		if err := dp.processPDFFile(pdfFile); err != nil {
-			logrus.Errorf("❌ Erro ao processar %s: %v", filepath.Base(pdfFile), err)
-		}
+		wg.Add(1)
+		go func(filePath string) {
+			defer wg.Done()
+			semaphore <- struct{}{}        // Adquirir semáforo
+			defer func() { <-semaphore }() // Liberar semáforo
+
+			if err := dp.processPDFFile(filePath); err != nil {
+				errors <- fmt.Errorf("erro ao processar %s: %v", filepath.Base(filePath), err)
+			}
+		}(pdfFile)
+	}
+
+	// Aguardar todas as goroutines terminarem
+	wg.Wait()
+	close(errors)
+
+	// Verificar se houve erros
+	for err := range errors {
+		logrus.Errorf("❌ %v", err)
 	}
 
 	// Gerar relatório final
@@ -379,9 +449,11 @@ func (dp *DarmProcessor) processPDFFile(filePath string) error {
 			logrus.Errorf("❌ Erro ao verificar guia: %v", err)
 		}
 
-		// Adicionar guia ao controle de processadas
+		// Thread-safe: adicionar guia ao controle de processadas
+		dp.mu.Lock()
 		dp.ProcessedGuias[darmData.NumeroGuia] = true
 		dp.GuiasProcessadas = append(dp.GuiasProcessadas, darmData.NumeroGuia)
+		dp.mu.Unlock()
 
 		sqlContent := dp.generateSQLInsert(darmData)
 
@@ -390,8 +462,10 @@ func (dp *DarmProcessor) processPDFFile(filePath string) error {
 			return fmt.Errorf("erro ao escrever arquivo SQL: %v", err)
 		}
 
-		// Armazenar o INSERT para o arquivo único
+		// Thread-safe: armazenar o INSERT para o arquivo único
+		dp.mu.Lock()
 		dp.AllSQLInserts = append(dp.AllSQLInserts, sqlContent)
+		dp.mu.Unlock()
 
 		logrus.Infof("✅ Arquivo SQL gerado: %s", sqlFilename)
 		logrus.Infof("📊 Guias processadas até agora: %d", len(dp.GuiasProcessadas))
@@ -435,110 +509,147 @@ func (dp *DarmProcessor) extractTextFromPDF(filePath string) (string, error) {
 func (dp *DarmProcessor) extractDarmData(text string) *DarmData {
 	data := &DarmData{}
 
-	// Padrões para extrair dados do DARM
-	patterns := map[string][]string{
-		"inscricao": {
-			`(?:Inscrição|INSCRIÇÃO|Inscrição Municipal|Inscrição)\s*:?\s*(\d+)`,
-			`(?:Inscrição|INSCRIÇÃO)\s*(\d+)`,
-			`Insc\.?\s*:?\s*(\d+)`,
-			`02\.\s*INSCRIÇÃO MUNICIPAL\s*(\d+)`,
-		},
-		"codigoBarras": {
-			`([\d\.\s]+)`,
-		},
-		"codigoReceita": {
-			`(?:RECEITA|Receita)\s*(\d{1,4}-\d{1,2})(?:[^\d]|$)`,
-			`01\.\s*RECEITA\s*(\d{1,4}-\d{1,2})(?:[^\d]|$)`,
-			`(\d{1,4})-(\d{1,2})(?:[^\d]|$)`,
-		},
-		"valorPrincipal": {
-			`(?:Valor Principal|VALOR PRINCIPAL|Valor principal)\s*:?\s*R?\$?\s*([\d,\.]+)`,
-			`(?:Principal|PRINCIPAL)\s*:?\s*R?\$?\s*([\d,\.]+)`,
-			`R?\$?\s*([\d,\.]+)\s*(?:Principal|PRINCIPAL)`,
-			`06\.\s*VALOR DO TRIBUTO\s*R?\$?\s*([\d,\.]+)`,
-		},
-		"valorTotal": {
-			`(?:Valor Total|VALOR TOTAL|Valor total)\s*:?\s*R?\$?\s*([\d,\.]+)`,
-			`(?:Total|TOTAL)\s*:?\s*R?\$?\s*([\d,\.]+)`,
-			`R?\$?\s*([\d,\.]+)\s*(?:Total|TOTAL)`,
-			`09\.\s*VALOR TOTAL\s*R?\$?\s*([\d,\.]+)`,
-		},
-		"dataVencimento": {
-			`(?:Vencimento|VENCIMENTO|Venc\.?)\s*:?\s*(\d{2}/\d{2}/\d{4})`,
-			`(\d{2}/\d{2}/\d{4})\s*(?:Vencimento|VENCIMENTO)`,
-			`03\.\s*DATA VENCIMENTO\s*(\d{2}/\d{2}/\d{4})`,
-		},
-		"exercicio": {
-			`(?:Exercício|EXERCÍCIO|Exerc\.?)\s*:?\s*(\d{4})`,
-			`(\d{4})\s*(?:Exercício|EXERCÍCIO)`,
-			`04\.\s*ANO DE REFERÊNCIA\s*(\d{4})`,
-		},
-		"numeroGuia": {
-			`05\.\s*GUIA NØ\s*\n?([0-9]+)`,
-			`(?:Guia|GUIA|Número da Guia|Nº Guia)\s*:?\s*(\d+)`,
-			`(?:Guia|GUIA)\s*(\d+)`,
-			`Guia\.?\s*:?\s*(\d+)`,
-		},
-		"competencia": {
-			`(?:Competência|COMPETÊNCIA|Comp\.?)\s*:?\s*(\d{2}/\d{4})`,
-			`(\d{2}/\d{4})\s*(?:Competência|COMPETÊNCIA)`,
-		},
+	// Extrair inscrição
+	if matches := inscricaoRegex.FindStringSubmatch(text); len(matches) > 1 {
+		data.Inscricao = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo inscricao encontrado: %s", data.Inscricao)
+	} else if matches := inscricaoAltRegex.FindStringSubmatch(text); len(matches) > 1 {
+		data.Inscricao = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo inscricao encontrado: %s", data.Inscricao)
+	} else if matches := inscricaoShortRegex.FindStringSubmatch(text); len(matches) > 1 {
+		data.Inscricao = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo inscricao encontrado: %s", data.Inscricao)
+	} else if matches := inscricaoNumRegex.FindStringSubmatch(text); len(matches) > 1 {
+		data.Inscricao = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo inscricao encontrado: %s", data.Inscricao)
 	}
 
-	// Extrair cada campo usando múltiplos padrões
-	for key, patternArray := range patterns {
-		for _, pattern := range patternArray {
-			re := regexp.MustCompile(pattern)
-			matches := re.FindStringSubmatch(text)
-			if len(matches) > 1 {
-				switch key {
-				case "inscricao":
-					data.Inscricao = strings.TrimSpace(matches[1])
-				case "codigoBarras":
-					// Pega todas as sequências de dígitos, pontos e espaços
-					allMatches := regexp.MustCompile(`[\d\.\s]+`).FindAllString(text, -1)
-					if len(allMatches) > 0 {
-						codigo := strings.Join(allMatches, "")
-						// Remove tudo que não for número e corta para 48 dígitos
-						codigo = regexp.MustCompile(`\D`).ReplaceAllString(codigo, "")
-						if len(codigo) > 48 {
-							codigo = codigo[:48]
-						}
-						data.CodigoBarras = codigo
-					}
-				case "codigoReceita":
-					if len(matches) > 2 {
-						data.CodigoReceita = matches[1] + matches[2]
-					} else {
-						codigoCompleto := matches[1]
-						if strings.Contains(codigoCompleto, "-") {
-							data.CodigoReceita = strings.ReplaceAll(codigoCompleto, "-", "")
-						} else {
-							data.CodigoReceita = codigoCompleto
-						}
-					}
-				case "valorPrincipal":
-					data.ValorPrincipal = strings.TrimSpace(matches[1])
-				case "valorTotal":
-					data.ValorTotal = strings.TrimSpace(matches[1])
-				case "dataVencimento":
-					data.DataVencimento = strings.TrimSpace(matches[1])
-				case "exercicio":
-					data.Exercicio = strings.TrimSpace(matches[1])
-				case "numeroGuia":
-					data.NumeroGuia = strings.TrimSpace(matches[1])
-					// Remove zeros à esquerda
-					data.NumeroGuia = strings.TrimLeft(data.NumeroGuia, "0")
-					if data.NumeroGuia == "" {
-						data.NumeroGuia = "0"
-					}
-				case "competencia":
-					data.Competencia = strings.TrimSpace(matches[1])
-				}
-				logrus.Infof("Campo %s encontrado: %s", key, matches[1])
-				break
-			}
+	// Extrair código de barras
+	allMatches := codigoBarrasRegex.FindAllString(text, -1)
+	if len(allMatches) > 0 {
+		codigo := strings.Join(allMatches, "")
+		codigo = cleanDigitsRegex.ReplaceAllString(codigo, "")
+		if len(codigo) > 48 {
+			codigo = codigo[:48]
 		}
+		data.CodigoBarras = codigo
+		logrus.Infof("Campo codigoBarras encontrado: %s", data.CodigoBarras)
+	}
+
+	// Extrair código de receita
+	if matches := codigoReceitaRegex1.FindStringSubmatch(text); len(matches) > 1 {
+		codigoCompleto := matches[1]
+		if strings.Contains(codigoCompleto, "-") {
+			data.CodigoReceita = strings.ReplaceAll(codigoCompleto, "-", "")
+		} else {
+			data.CodigoReceita = codigoCompleto
+		}
+		logrus.Infof("Campo codigoReceita encontrado: %s", data.CodigoReceita)
+	} else if matches := codigoReceitaRegex2.FindStringSubmatch(text); len(matches) > 1 {
+		codigoCompleto := matches[1]
+		if strings.Contains(codigoCompleto, "-") {
+			data.CodigoReceita = strings.ReplaceAll(codigoCompleto, "-", "")
+		} else {
+			data.CodigoReceita = codigoCompleto
+		}
+		logrus.Infof("Campo codigoReceita encontrado: %s", data.CodigoReceita)
+	} else if matches := codigoReceitaRegex3.FindStringSubmatch(text); len(matches) > 2 {
+		data.CodigoReceita = matches[1] + matches[2]
+		logrus.Infof("Campo codigoReceita encontrado: %s", data.CodigoReceita)
+	}
+
+	// Extrair valor principal
+	if matches := valorPrincipalRegex1.FindStringSubmatch(text); len(matches) > 1 {
+		data.ValorPrincipal = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo valorPrincipal encontrado: %s", data.ValorPrincipal)
+	} else if matches := valorPrincipalRegex2.FindStringSubmatch(text); len(matches) > 1 {
+		data.ValorPrincipal = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo valorPrincipal encontrado: %s", data.ValorPrincipal)
+	} else if matches := valorPrincipalRegex3.FindStringSubmatch(text); len(matches) > 1 {
+		data.ValorPrincipal = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo valorPrincipal encontrado: %s", data.ValorPrincipal)
+	} else if matches := valorPrincipalRegex4.FindStringSubmatch(text); len(matches) > 1 {
+		data.ValorPrincipal = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo valorPrincipal encontrado: %s", data.ValorPrincipal)
+	}
+
+	// Extrair valor total
+	if matches := valorTotalRegex1.FindStringSubmatch(text); len(matches) > 1 {
+		data.ValorTotal = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo valorTotal encontrado: %s", data.ValorTotal)
+	} else if matches := valorTotalRegex2.FindStringSubmatch(text); len(matches) > 1 {
+		data.ValorTotal = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo valorTotal encontrado: %s", data.ValorTotal)
+	} else if matches := valorTotalRegex3.FindStringSubmatch(text); len(matches) > 1 {
+		data.ValorTotal = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo valorTotal encontrado: %s", data.ValorTotal)
+	} else if matches := valorTotalRegex4.FindStringSubmatch(text); len(matches) > 1 {
+		data.ValorTotal = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo valorTotal encontrado: %s", data.ValorTotal)
+	}
+
+	// Extrair data de vencimento
+	if matches := dataVencimentoRegex1.FindStringSubmatch(text); len(matches) > 1 {
+		data.DataVencimento = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo dataVencimento encontrado: %s", data.DataVencimento)
+	} else if matches := dataVencimentoRegex2.FindStringSubmatch(text); len(matches) > 1 {
+		data.DataVencimento = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo dataVencimento encontrado: %s", data.DataVencimento)
+	} else if matches := dataVencimentoRegex3.FindStringSubmatch(text); len(matches) > 1 {
+		data.DataVencimento = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo dataVencimento encontrado: %s", data.DataVencimento)
+	}
+
+	// Extrair exercício
+	if matches := exercicioRegex1.FindStringSubmatch(text); len(matches) > 1 {
+		data.Exercicio = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo exercicio encontrado: %s", data.Exercicio)
+	} else if matches := exercicioRegex2.FindStringSubmatch(text); len(matches) > 1 {
+		data.Exercicio = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo exercicio encontrado: %s", data.Exercicio)
+	} else if matches := exercicioRegex3.FindStringSubmatch(text); len(matches) > 1 {
+		data.Exercicio = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo exercicio encontrado: %s", data.Exercicio)
+	}
+
+	// Extrair número da guia
+	if matches := numeroGuiaRegex1.FindStringSubmatch(text); len(matches) > 1 {
+		data.NumeroGuia = strings.TrimSpace(matches[1])
+		data.NumeroGuia = strings.TrimLeft(data.NumeroGuia, "0")
+		if data.NumeroGuia == "" {
+			data.NumeroGuia = "0"
+		}
+		logrus.Infof("Campo numeroGuia encontrado: %s", data.NumeroGuia)
+	} else if matches := numeroGuiaRegex2.FindStringSubmatch(text); len(matches) > 1 {
+		data.NumeroGuia = strings.TrimSpace(matches[1])
+		data.NumeroGuia = strings.TrimLeft(data.NumeroGuia, "0")
+		if data.NumeroGuia == "" {
+			data.NumeroGuia = "0"
+		}
+		logrus.Infof("Campo numeroGuia encontrado: %s", data.NumeroGuia)
+	} else if matches := numeroGuiaRegex3.FindStringSubmatch(text); len(matches) > 1 {
+		data.NumeroGuia = strings.TrimSpace(matches[1])
+		data.NumeroGuia = strings.TrimLeft(data.NumeroGuia, "0")
+		if data.NumeroGuia == "" {
+			data.NumeroGuia = "0"
+		}
+		logrus.Infof("Campo numeroGuia encontrado: %s", data.NumeroGuia)
+	} else if matches := numeroGuiaRegex4.FindStringSubmatch(text); len(matches) > 1 {
+		data.NumeroGuia = strings.TrimSpace(matches[1])
+		data.NumeroGuia = strings.TrimLeft(data.NumeroGuia, "0")
+		if data.NumeroGuia == "" {
+			data.NumeroGuia = "0"
+		}
+		logrus.Infof("Campo numeroGuia encontrado: %s", data.NumeroGuia)
+	}
+
+	// Extrair competência
+	if matches := competenciaRegex1.FindStringSubmatch(text); len(matches) > 1 {
+		data.Competencia = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo competencia encontrado: %s", data.Competencia)
+	} else if matches := competenciaRegex2.FindStringSubmatch(text); len(matches) > 1 {
+		data.Competencia = strings.TrimSpace(matches[1])
+		logrus.Infof("Campo competencia encontrado: %s", data.Competencia)
 	}
 
 	// Validar se temos os dados mínimos necessários
@@ -581,7 +692,7 @@ func (dp *DarmProcessor) generateSQLInsert(darmData *DarmData) string {
 	// Limitar código de barras a 48 dígitos e remover caracteres não numéricos
 	codigoBarras := "NULL"
 	if darmData.CodigoBarras != "" {
-		cleanCode := regexp.MustCompile(`\D`).ReplaceAllString(darmData.CodigoBarras, "")
+		cleanCode := cleanDigitsRegex.ReplaceAllString(darmData.CodigoBarras, "")
 		if len(cleanCode) > 48 {
 			cleanCode = cleanCode[:48]
 		}
@@ -649,7 +760,7 @@ func (dp *DarmProcessor) parseMonetaryValue(value string) string {
 	}
 
 	// Remover R$, espaços e pontos de milhares
-	cleanValue := regexp.MustCompile(`[R$\s]`).ReplaceAllString(value, "")
+	cleanValue := monetaryCleanRegex.ReplaceAllString(value, "")
 
 	// Se tem vírgula, tratar como separador decimal brasileiro
 	if strings.Contains(cleanValue, ",") {
